@@ -8,6 +8,7 @@ import torch
 import torch.optim as optim
 from dataLoader.KITTI_dataset import load_train_data, load_test1_data, load_test2_data
 from models_kitti import Model
+from wandb_logger import WandbLogger
 import scipy.io as scio
 
 import ssl
@@ -21,7 +22,9 @@ import argparse
 import time
 
 
-def test1(net_test, args, save_path, epoch):
+def test1(net_test, args, save_path, epoch, wandb_logger):
+    wandb_features = dict()
+
     net_test.eval()
 
     dataloader = load_test1_data(mini_batch, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
@@ -37,13 +40,16 @@ def test1(net_test, args, save_path, epoch):
     start_time = time.time()
     with torch.no_grad():
         for i, data in enumerate(dataloader, 0):
-
             sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [item.to(device) for item in data[:-1]]
 
             if args.proj == 'CrossAttn':
-                pred_u, pred_v, pred_orien = net_test.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_heading=gt_heading, mode='test')
+                pred_u, pred_v, pred_orien = net_test.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, 
+                                                                      gt_shift_u=gt_shift_u, gt_shift_v=gt_shift_v, gt_heading=gt_heading, 
+                                                                      mode='test')
             else:
-                pred_u, pred_v, pred_orien = net_test.rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_heading=gt_heading, mode='test')
+                pred_u, pred_v, pred_orien = net_test.rot_corr(sat_map, grd_left_imgs, left_camera_k, 
+                                                               gt_shift_u=gt_shift_u, gt_shift_v=gt_shift_v, gt_heading=gt_heading, 
+                                                               mode='test')
 
             pred_lons.append(pred_u.data.cpu().numpy())
             pred_lats.append(pred_v.data.cpu().numpy())
@@ -107,11 +113,22 @@ def test1(net_test, args, save_path, epoch):
     print('Angle average (init, pred): ', np.mean(np.abs(gt_oriens)), np.mean(angle_diff))
     print('Angle median (init, pred): ', np.median(np.abs(gt_oriens)), np.median(angle_diff))
 
+    wandb_features[f'test1/distance_last'] = np.mean(distance)
+    wandb_features[f'test1/distance_last_median'] = np.median(distance)
+    wandb_features[f'test1/shift_lat_last'] = np.mean(diff_lats)
+    wandb_features[f'test1/shift_lon_last'] = np.mean(diff_lons)
+    wandb_features[f'test1/shift_rot_last'] = np.mean(angle_diff)
+    wandb_features[f'test1/shift_lat_median'] = np.median(diff_lats)
+    wandb_features[f'test1/shift_lon_median'] = np.median(diff_lons)
+    wandb_features[f'test1/shift_rot_median'] = np.median(angle_diff)
+
+
     for idx in range(len(metrics)):
         pred = np.sum(distance < metrics[idx]) / distance.shape[0] * 100
         init = np.sum(init_dis < metrics[idx]) / init_dis.shape[0] * 100
 
         line = 'distance within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test1/percent_dist_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -123,6 +140,7 @@ def test1(net_test, args, save_path, epoch):
         init = np.sum(np.abs(gt_lats) < metrics[idx]) / gt_lats.shape[0] * 100
 
         line = 'lateral within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test1/percent_lat_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -131,6 +149,7 @@ def test1(net_test, args, save_path, epoch):
         init = np.sum(np.abs(gt_lons) < metrics[idx]) / gt_lons.shape[0] * 100
 
         line = 'longitudinal within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test1/percent_lon_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -138,18 +157,21 @@ def test1(net_test, args, save_path, epoch):
         pred = np.sum(angle_diff < angles[idx]) / angle_diff.shape[0] * 100
         init = np.sum(init_angle < angles[idx]) / angle_diff.shape[0] * 100
         line = 'angle within ' + str(angles[idx]) + ' degrees (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test1/percent_rot_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
     print('====================================')
     f.write('====================================\n')
     f.close()
+    wandb_logger.log_evaluate(wandb_features)
 
     net_test.train()
     return
 
 
-def test2(net_test, args, save_path, epoch):
+def test2(net_test, args, save_path, epoch, wandb_logger):
+    wandb_features = dict()
     ### net evaluation state
     net_test.eval()
 
@@ -164,13 +186,14 @@ def test2(net_test, args, save_path, epoch):
     gt_oriens = []
     with torch.no_grad():
         for i, data in enumerate(dataloader, 0):
-
             sat_map, left_camera_k, grd_left_imgs, gt_shift_u, gt_shift_v, gt_heading = [item.to(device) for item in data[:-1]]
 
             if args.proj == 'CrossAttn':
-                pred_u, pred_v, pred_orien = net_test.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_heading=gt_heading, mode='test')
+                pred_u, pred_v, pred_orien = net_test.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, 
+                                                                      gt_shift_u=gt_shift_u, gt_shift_v=gt_shift_v, gt_heading=gt_heading, mode='test')
             else:
-                pred_u, pred_v, pred_orien = net_test.rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_heading=gt_heading, mode='test')
+                pred_u, pred_v, pred_orien = net_test.rot_corr(sat_map, grd_left_imgs, left_camera_k, 
+                                                               gt_shift_u=gt_shift_u, gt_shift_v=gt_shift_v, gt_heading=gt_heading, mode='test')
 
             pred_lons.append(pred_u.data.cpu().numpy())
             pred_lats.append(pred_v.data.cpu().numpy())
@@ -229,11 +252,22 @@ def test2(net_test, args, save_path, epoch):
     print('Angle average (init, pred): ', np.mean(np.abs(gt_oriens)), np.mean(angle_diff))
     print('Angle median (init, pred): ', np.median(np.abs(gt_oriens)), np.median(angle_diff))
 
+    wandb_features[f'test2/distance_last'] = np.mean(distance)
+    wandb_features[f'test2/distance_last_median'] = np.median(distance)
+    wandb_features[f'test2/shift_lat_last'] = np.mean(diff_lats)
+    wandb_features[f'test2/shift_lon_last'] = np.mean(diff_lons)
+    wandb_features[f'test2/shift_rot_last'] = np.mean(angle_diff)
+    wandb_features[f'test2/shift_lat_median'] = np.median(diff_lats)
+    wandb_features[f'test2/shift_lon_median'] = np.median(diff_lons)
+    wandb_features[f'test2/shift_rot_median'] = np.median(angle_diff)
+
+
     for idx in range(len(metrics)):
         pred = np.sum(distance < metrics[idx]) / distance.shape[0] * 100
         init = np.sum(init_dis < metrics[idx]) / init_dis.shape[0] * 100
 
         line = 'distance within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test2/percent_dist_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -246,6 +280,7 @@ def test2(net_test, args, save_path, epoch):
         init = np.sum(np.abs(gt_lats) < metrics[idx]) / gt_lats.shape[0] * 100
 
         line = 'lateral within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test2/percent_lat_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -255,6 +290,7 @@ def test2(net_test, args, save_path, epoch):
         init = np.sum(np.abs(gt_lons) < metrics[idx]) / gt_lons.shape[0] * 100
 
         line = 'longitudinal within ' + str(metrics[idx]) + ' meters (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test2/percent_lon_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -265,6 +301,7 @@ def test2(net_test, args, save_path, epoch):
         pred = np.sum(angle_diff < angles[idx]) / angle_diff.shape[0] * 100
         init = np.sum(init_angle < angles[idx]) / angle_diff.shape[0] * 100
         line = 'angle within ' + str(angles[idx]) + ' degrees (init, pred): ' + str(init) + ' ' + str(pred)
+        wandb_features[f'test2/percent_rot_{metrics[idx]}m'] = pred
         print(line)
         f.write(line + '\n')
 
@@ -272,6 +309,7 @@ def test2(net_test, args, save_path, epoch):
     f.write('====================================\n')
     f.close()
     result = np.sum((diff_lats < metrics[0])) / diff_lats.shape[0] * 100
+    wandb_logger.log_evaluate(wandb_features)
 
     net_test.train()
 
@@ -279,7 +317,8 @@ def test2(net_test, args, save_path, epoch):
     return result
 
 
-def train(net, lr, args, save_path):
+def train(net, lr, args, save_path, wandb_logger):
+    wandb_features = dict()
 
     for epoch in range(args.resume, args.epochs):
         net.train()
@@ -292,7 +331,7 @@ def train(net, lr, args, save_path):
         optimizer = optim.Adam(net.parameters(), lr=base_lr)
         optimizer.zero_grad()
 
-        trainloader = load_train_data(mini_batch, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
+        trainloader = load_train_data(args, mini_batch, args.shift_range_lat, args.shift_range_lon, args.rotation_range)
 
         loss_vec = []
 
@@ -307,7 +346,8 @@ def train(net, lr, args, save_path):
             if args.proj == 'CrossAttn':
                 opt_loss, loss_decrease, shift_lat_decrease, shift_lon_decrease, thetas_decrease, loss_last, \
                 shift_lat_last, shift_lon_last, theta_last, \
-                corr_loss = net.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_shift_u, gt_shift_v, gt_heading, mode='train')
+                corr_loss = net.CVattn_rot_corr(sat_map, grd_left_imgs, left_camera_k, gt_shift_u, gt_shift_v, gt_heading, mode='train',
+                                                loop=Loop)
             else:
                 opt_loss, loss_decrease, shift_lat_decrease, shift_lon_decrease, thetas_decrease, loss_last, \
                 shift_lat_last, shift_lon_last, theta_last, \
@@ -343,13 +383,24 @@ def train(net, lr, args, save_path):
                         ' coe_R: ' + str(np.round(net.coe_R.item(), decimals=2)) +
                         ' coe_T: ' + str(np.round(net.coe_T.item(), decimals=2))
                         )
+                wandb_features['train/loss_last'] = np.round(loss_last[level].item(), decimals=4)
+                wandb_features['train/shift_lat_last'] = np.round(shift_lat_last[level].item(), decimals=2)
+                wandb_features['train/shift_lon_last'] = np.round(shift_lon_last[level].item(), decimals=2)
+                wandb_features['train/shift_rot_last'] = np.round(theta_last[level].item(), decimals=2)
+                wandb_features['train/triplet_loss'] = np.round(corr_loss.item(), decimals=4)
+                wandb_features['train/coe_R'] = np.round(net.coe_R.item(), decimals=2)
+                wandb_features['train/coe_T'] = np.round(net.coe_T.item(), decimals=2)
+                wandb_features['train/additional_loss'] = np.round(corr_loss.item(), decimals=4)
+
+                wandb_logger.log_evaluate(wandb_features)
+
 
         print('Save Model ...')
 
         torch.save(net.state_dict(), os.path.join(save_path, 'model_' + str(epoch) + '.pth'))
 
-        test1(net, args, save_path, epoch)
-        test2(net, args, save_path, epoch)
+        test1(net, args, save_path, epoch, wandb_logger=wandb_logger)
+        test2(net, args, save_path, epoch, wandb_logger=wandb_logger)
 
     print('Finished Training')
 
@@ -377,6 +428,8 @@ def parse_args():
     parser.add_argument('--proj', type=str, default='CrossAttn', help='geo, CrossAttn')
 
     parser.add_argument('--use_uncertainty', type=int, default=1, help='0 or 1')
+    parser.add_argument('--wandb', action='store_true', help='wandb logging')  # 1e-2
+    parser.add_argument('--debug', action='store_true', help='debug mode')  # 1e-2
 
     args = parser.parse_args()
 
@@ -412,6 +465,14 @@ if __name__ == '__main__':
 
     args = parse_args()
 
+    # Log with wandb
+    if args.wandb:
+        wandb_config = dict(project="newloc", entity='kaist-url-ai28', name='ModelsKitti/3DoF/lat20.0m_lon20.0m_rot10.0_Nit2_TransV1G2SP_CrossAttn_Uncertainty')
+        wandb_logger = WandbLogger(wandb_config, args)
+    else:
+        wandb_logger = WandbLogger(None)
+    wandb_logger.before_run()
+
     mini_batch = args.batch_size
 
     save_path = getSavePath(args)
@@ -419,10 +480,9 @@ if __name__ == '__main__':
     net.to(device)
 
     if args.test:
-        net.load_state_dict(torch.load(os.path.join(save_path, 'model_4.pth')), strict=False)
-
-        test1(net, args, save_path, epoch=0)
-        test2(net, args, save_path, epoch=0)
+        # net.load_state_dict(torch.load(os.path.join(save_path, 'model_4.pth')), strict=False)
+        test1(net, args, save_path, epoch=0, wandb_logger=wandb_logger)
+        test2(net, args, save_path, epoch=0, wandb_logger=wandb_logger)
 
     else:
         if args.resume:
@@ -430,5 +490,5 @@ if __name__ == '__main__':
             print("resume from " + 'model_' + str(args.resume - 1) + '.pth')
 
         lr = args.lr
-        train(net, lr, args, save_path)
+        train(net, lr, args, save_path, wandb_logger=wandb_logger)
 

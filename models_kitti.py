@@ -669,7 +669,7 @@ class Model(nn.Module):
             return pred_u, pred_v, pred_orien * self.args.rotation_range
 
     def CVattn_rot_corr(self, sat_map, grd_img_left, left_camera_k, gt_shift_u=None, gt_shift_v=None, gt_heading=None,
-                        mode='train'):
+                        mode='train', loop=0):
         '''
         Args:
             sat_map: [B, C, A, A] A--> sidelength
@@ -719,6 +719,20 @@ class Model(nn.Module):
 
                     shift_u_new, shift_v_new, heading_new = self.Trans_update(
                         shift_u, shift_v, heading, grd_feat_proj, sat_feat)
+                    
+                    if self.args.debug and iter == 0:
+                        from utils import imsave
+                        with torch.no_grad():
+                            gt_grd_feat_proj, _, _, _ = self.project_grd_to_map(grd_feat, None, 
+                                                                                gt_shift_u, gt_shift_v, gt_heading, left_camera_k, A, 
+                                                                                ori_grdH, ori_grdW)
+                            save_path = f'kitti/boosting/{loop}'
+                            imsave(grd_feat[0], save_path, name=f'1level{level}_iter{iter}_grd_feat')
+                            imsave(gt_grd_feat_proj[0], save_path, name=f'1level{level}_iter{iter}_grd_feat_proj')
+                            imsave(sat_feat[0], save_path, name=f'1level{level}_iter{iter}_sat_feat')
+                            imsave(grd_img_left[0], save_path, name=f'0grd_img_left')
+                            imsave(sat_map[0], save_path, name=f'0sat_map')
+
                 elif self.args.Optimizer == 'TransV1S2GP':
                     grd_H, grd_W = grd_feat.shape[-2:]
                     sat_feat_proj, _, sat_uv, mask = self.project_map_to_grd(

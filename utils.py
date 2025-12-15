@@ -1,6 +1,9 @@
 
 import numpy as np
 import torch
+import os
+from PIL import Image
+import matplotlib.pyplot as plt
 
 CameraGPS_shift = [1.08, 0.26]
 Satmap_zoom = 18
@@ -186,3 +189,27 @@ def get_height_config():
     return start, end, count
 
     
+
+def imsave(image, folder, name, norm='minmax'):
+    root = f"/ws/external/debug_images/{folder}"
+    os.makedirs(root, exist_ok=True)
+
+    if isinstance(image, Image.Image):
+        image.save(root + f'/{name}.png')
+        return
+    if norm == 'minmax':
+        image = (image - image.min()) / (image.max() - image.min())
+    elif norm == '01':
+        image = torch.clamp(image, 0, 1)
+    elif norm == 'l2':
+        image = image / image.norm(dim=(1, 2), keepdim=True, p=2)
+    image = image.cpu().detach().numpy()
+    image = (image * 255).astype(np.uint8)
+    image = np.transpose(image, (1, 2, 0))
+    if image.shape[2] == 1:
+        plt.imsave(root + f'/{name}.png', np.asarray(image)[:, :, 0], cmap='gray')
+    elif image.shape[2] != 3:
+        image = image.mean(axis=2, keepdims=True)
+        plt.imsave(root + f'/{name}.png', np.asarray(image)[:, :, 0], cmap='gray')
+    else:
+        plt.imsave(root + f'/{name}.png', np.asarray(image))

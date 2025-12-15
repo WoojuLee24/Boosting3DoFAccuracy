@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-root_dir = '../../dataset/Kitti1' # '../../data/Kitti' # '../Data' #'..\\Data' #
+root_dir = '/ws/data/kitti-vo' #'../../dataset/Kitti1' # '../../data/Kitti' # '../Data' #'..\\Data' #
 # root_dir = '/media/yujiao/6TB/dataset/Kitti1'
 
 test_csv_file_name = 'test.csv'
@@ -54,8 +54,9 @@ test2_file = './dataLoader/test2_files.txt'
 
 
 class SatGrdDataset(Dataset):
-    def __init__(self, root, file,
+    def __init__(self, args, root, file,
                  transform=None, shift_range_lat=20, shift_range_lon=20, rotation_range=10):
+        self.args = args
         self.root = root
 
         self.meter_per_pixel = utils.get_meter_per_pixel(scale=1)
@@ -175,8 +176,12 @@ class SatGrdDataset(Dataset):
         # now east direction is the real vehicle heading direction
 
         # randomly generate shift
-        gt_shift_x = np.random.uniform(-1, 1)  # --> right as positive, parallel to the heading direction
+        gt_shift_x = np.random.uniform(-1, 1)   # --> right as positive, parallel to the heading direction
         gt_shift_y = np.random.uniform(-1, 1)  # --> up as positive, vertical to the heading direction
+        
+        if self.args.debug:
+            gt_shift_x = 1.0
+            gt_shift_y = 1.0
 
         sat_rand_shift = \
             sat_align_cam.transform(
@@ -187,6 +192,10 @@ class SatGrdDataset(Dataset):
 
         # randomly generate roation
         theta = np.random.uniform(-1, 1)
+
+        if self.args.debug:
+            theta = 1.0 
+
         sat_rand_shift_rand_rot = \
             sat_rand_shift.rotate(theta * self.rotation_range)
 
@@ -391,7 +400,7 @@ class SatGrdDatasetTest(Dataset):
         
 
 
-def load_train_data(batch_size, shift_range_lat=20, shift_range_lon=20, rotation_range=10):
+def load_train_data(args, batch_size, shift_range_lat=20, shift_range_lon=20, rotation_range=10):
     SatMap_process_sidelength = utils.get_process_satmap_sidelength()
 
     satmap_transform = transforms.Compose([
@@ -407,14 +416,23 @@ def load_train_data(batch_size, shift_range_lat=20, shift_range_lon=20, rotation
         transforms.ToTensor(),
     ])
 
-    train_set = SatGrdDataset(root=root_dir, file=train_file,
+    train_set = SatGrdDataset(args=args, root=root_dir, file=train_file,
                               transform=(satmap_transform, grdimage_transform),
                               shift_range_lat=shift_range_lat,
                               shift_range_lon=shift_range_lon,
                               rotation_range=rotation_range)
 
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True,
-                              num_workers=num_thread_workers, drop_last=False)
+    # train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True,
+    #                           num_workers=num_thread_workers, drop_last=False)
+    if args.debug:
+        shuffle = False
+        num_thread_workers = 0  
+    else:
+        shuffle = True
+        num_thread_workers = 2  
+
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=shuffle, pin_memory=True,
+                            num_workers=num_thread_workers, drop_last=False)
     return train_loader
 
 
